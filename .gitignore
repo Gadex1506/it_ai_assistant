@@ -1,0 +1,22 @@
+# gitignore
+
+# Variables de entorno - NUNCA subir a git
+.env
+
+# Entorno virtual
+venv/
+
+# Audio temporal generado por el servidor
+temp_audio/
+
+# Cache de Python
+__pycache__/
+*.pyc
+
+# Archivos de modelo de Whisper (son grandes, se descargan automaticamente)
+*.pt
+
+# Scripts de prueba temportales
+test_*.py
+test_output.*
+test_voice_*.mp3
