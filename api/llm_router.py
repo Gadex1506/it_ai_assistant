@@ -41,7 +41,7 @@ def get_llm_service(request: Request) -> LLMService:
     Returns:
         LLMService configurado con cliente precargado.
     """
-    return LLMService(llm_client=request.app.state.llm_client)
+    return request.app.state.llm_service
 
 router = APIRouter(prefix=ROUTER_PREFIX, tags=[ROUTER_TAG])
 

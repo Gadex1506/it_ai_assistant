@@ -23,6 +23,9 @@ from fastapi.responses import JSONResponse
 # Global Settings
 from config.settings import settings
 
+# Services
+from services.llm_service import LLMService
+
 # Routers
 from api.stt_router import router as stt_router
 from api.llm_router import router as llm_router
@@ -93,9 +96,9 @@ async def lifespan(app: FastAPI):
     logger.info("Modelo Whisper para STT cargado y listo.")
 
     # ====== CARGA DEL LLM ======
-    logger.info("Inicializando cliente Groq...")
-    app.state.llm_client = GroqClient()
-    logger.info("Cliente Groq listo.")
+    logger.info("Inicializando servicio LLM con Groq...")
+    app.state.llm_service = LLMService(llm_client=GroqClient())
+    logger.info("Servicio LLM listo.")
 
     logger.info("Servidor listo para recibir peticiones.")
 
