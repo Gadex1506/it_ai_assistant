@@ -13,7 +13,7 @@
 # Principio S de SOLID - este modulo solo maneja HTTP para LLM.
 # No contiene logica de negocio ni conoce proveedores LLM.
 # =============================================================
-
+    
 from fastapi import APIRouter, Depends , HTTPException, Request, status
 from models.llm_request import LLMRequest, HouseContext
 from models.llm_response import LLMResponse

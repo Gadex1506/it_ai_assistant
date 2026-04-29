@@ -30,6 +30,7 @@ from services.llm_service import LLMService
 from api.stt_router import router as stt_router
 from api.llm_router import router as llm_router
 from api.tts_router import router as tts_router
+from api.assistant_router import router as assistant_router
 
 # Infrastruture
 from infrastructure.stt.faster_whisper_client import FasterWhisperClient
@@ -132,6 +133,7 @@ app = FastAPI(
 app.include_router(tts_router)
 app.include_router(stt_router)
 app.include_router(llm_router)
+app.include_router(assistant_router)
 
 # =============================================================
 # Manejador global de errores no controlados

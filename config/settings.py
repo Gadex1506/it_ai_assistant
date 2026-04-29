@@ -1,12 +1,12 @@
 # config/settings.py
 # =============================================================
-# Módulo de configuracion centralizada del sistema.
+# Modulo de configuracion centralizada del sistema.
 #
 # Responsabilidad: leer las variables del archivo .env una sola
 # vez al iniciar el servidor y exponerlas como objetos tipados
 # al resto de las capas del sistema.
 #
-# Patron de diseño: Singleton — existe una unica instancia de
+# Patron de diseño Singleton: existe una unica instancia de
 # Settings compartida por todo el proyecto.
 # =============================================================
 
@@ -25,7 +25,7 @@ class ServerSettings:
 
     Agrupa host y puerto donde el servidor escuchara conexiones.
     frozen=True hace que la clase sea inmutable despues de crearse. La
-    configuracion no debe cambiar en tiempo de ejecucion
+    configuracion no debe cambiar en tiempo de ejecucion.
     """
     host: str
     port: int
@@ -160,7 +160,7 @@ def _validate_required_env_vars() -> None:
             f"{', '.join(missing_vars)}. "
             f"Verifica tu archivo .env."
         )
-    
+
 # =============================================================
 # Instancia Singleton — se crea una vez al importar el modulo.
 # Todas las capas del sistema importan esta instancia.
