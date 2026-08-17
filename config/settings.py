@@ -72,6 +72,21 @@ class AssistantSettings:
     """
     name: str
 
+@dataclass(frozen=True)
+class WeatherSettings:
+    """
+    Configuracion del servicio de clima OpenWeatherMap.
+    
+    Attributes:
+        api_key: clave de autenticacion de OpenWeatherMap.
+        city: nombre de la ciudad para consultar el clima.
+        country_code: codigo de pais ISO 3166. Ejemplo: CO, US.
+        units: sistema de unidades. metric=Celsius, imperial=Fahrenheit.
+    """
+    api_key: str
+    city: str
+    country_code: str
+    units: str
 
 # CLASE PRINCIPAL QUE UNIRA TODOS LOS GRUPOS ANTERIORES Y TENDRA EL SINGLETON
 @dataclass(frozen=True)
@@ -93,6 +108,7 @@ class Settings:
     whisper: WhisperSettings
     tts: TTSSettings
     assistant: AssistantSettings
+    weather: WeatherSettings
 
 def _load_settings() -> Settings:
     """
@@ -131,6 +147,12 @@ def _load_settings() -> Settings:
         assistant=AssistantSettings(
             name=os.getenv("ASSISTANT_NAME", "ARIA")
         ),
+        weather=WeatherSettings(
+            api_key=os.getenv("OPENWEATHER_API_KEY", ""),
+            city=os.getenv("OPENWEATHER_CITY", "Bogota"),
+            country_code=os.getenv("OPENWEATHER_COUNTRY_CODE", "CO"),
+            units=os.getenv("OPENWEATHER_UNITS", "metric"),
+        ),
     )
 
 def _validate_required_env_vars() -> None:
@@ -150,6 +172,7 @@ def _validate_required_env_vars() -> None:
         "GROQ_API_KEY",
         "GROQ_MODEL",
         "GROQ_ENDPOINT",
+        "OPENWEATHER_API_KEY",
     ]
 
     missing_vars = [var for var in required_vars if not os.getenv(var)]

@@ -60,7 +60,7 @@ router = APIRouter(prefix=ROUTER_PREFIX, tags=[ROUTER_TAG])
     description=(
         "Recibe texto desde Unity y devuelve un archivo de audio .mp3 "
         "generado con el motor TTS configurado. "
-        "Si no se especifica voz, usa la voz por defecto del servidor."
+        "Si no se específica voz, usa la voz por defecto del servidor."
     ),
 )
 async def speak(
@@ -173,7 +173,7 @@ def get_voices(
 @router.get(
     "/health",
     summary="Estado del servicio TTS",
-    description="Verifica que el servicio TTS esta funcionando."
+    description="Verifica que el servicio TTS está funcionando."
 )
 def health_check(
     service: TTSService = Depends(get_tts_service),

@@ -20,19 +20,27 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi import BackgroundTasks, Request, status
 from fastapi.responses import FileResponse
-
-# Services
-from services.stt_service import STTService
-from services.llm_service import LLMService
-from services.tts_service import TTSService
-
-# Infrastructure
-from infrastructure.tts.edge_tts_client import EdgeTTSClient
+from urllib.parse import quote
 
 # Models
 from models.llm_request import HouseContext
 from models.llm_response import INTENT_HOME_ACTION
 from models.tts_request import TTSRequest
+from models.morning_greeting_request import MorningGreetingRequest
+
+# Infrastructure
+from infrastructure.tts.edge_tts_client import EdgeTTSClient
+from infrastructure.weather.openweather_client import OpenWeatherClient
+
+# Services
+from services.stt_service import STTService
+from services.llm_service import LLMService
+from services.tts_service import TTSService
+from services.morning_routine_service import MorningRoutineService
+
+import logging
+
+logger = logging.getLogger("it_ai_assistant")
 
 ROUTER_PREFIX = "/assistant"
 ROUTER_TAG = "Assistant Pipeline"
@@ -96,7 +104,7 @@ router = APIRouter(prefix=ROUTER_PREFIX, tags=[ROUTER_TAG])
         "Endpoint principal del asistente. Recibe el audio del usuario "
         "desde Unity y ejecuta el pipeline completo STT -> LMM -> TTS. "
         "Devuelve el audio de respuesta del asistente como MP3. "
-        "La accion del hogar (si aplica) viene en los headers de la respuesta."
+        "La acción del hogar (si aplica) viene en los headers de la respuesta."
     ),
 )
 async def process_voice_command(
@@ -147,6 +155,12 @@ async def process_voice_command(
     # ── PASO 1: Leer el audio enviado por Unity ───────────────
     audio_bytes = await audio_file.read()
 
+    # TEMPORAL — guardar copia para diagnostico, borrar despues
+    debug_path = os.path.join("temp_audio", "DEBUG_received_audio.wav")
+    with open(debug_path, "wb") as f:
+        f.write(audio_bytes)
+    logger.info(f"[DEBUG] Audio recibido: {len(audio_bytes)} bytes, guardado en {debug_path}")
+
     if not audio_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -162,6 +176,7 @@ async def process_voice_command(
             audio_bytes=audio_bytes,
             language=language,
         )
+        logger.info(f"[DEBUG] STT transcribio: '{stt_result.text}' (idioma: {stt_result.language})")
     except RuntimeError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -179,6 +194,7 @@ async def process_voice_command(
             house_context=house_context,
         )
     except RuntimeError as error:
+        logger.error(f"[DEBUG] Fallo en LLM: {error}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Error en procesamiento de lenguaje (LLM): {error}",
@@ -193,6 +209,7 @@ async def process_voice_command(
     try:
         _, tts_audio_path = await tts_service.synthesize(tts_request)
     except RuntimeError as error:
+        logger.error(f"[DEBUG] Fallo en TTS: {error}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Error en sintesis de voz (TTS): {error}",
@@ -211,10 +228,84 @@ async def process_voice_command(
         headers=response_headers,
     )
 
+@router.post(
+    "/morning-greeting",
+    response_class=FileResponse,
+    summary="Saludo matutino con el clima",
+    description=(
+        "Genera el saludo matutino de ARIA con la info del clima actual de Bogotá. "
+        "Unity llama a este endpoint al abrir la aplicación una vez por día. "
+        "Devuelve el audio MP3 con el saludo dinámico de ARIA."
+    ),
+)
+async def morning_greeting(
+    request: MorningGreetingRequest,
+    background_tasks: BackgroundTasks,
+    tts_service: TTSService = Depends(get_tts_service),
+):
+    """
+    Genera el saludo matutino dinamico de ARIA.
+    
+    Consulta el clima actual de Bogota en OpenWeatherMap,
+    construye el texto del saludo con el nombre del usuario,
+    la hora y el clima, y lo sintetiza con la voz de ARIA.
+
+    Unity reproduce primero el audio pregrabado de bienvenida
+    y luego el audio que devuelve este endpoint, creando una
+    experiencia de transicion entre la voz grabada y ARIA.
+
+    Args:
+        request: MorningGreetingRequest con nombre del usuario y voz opcional.
+        background_tasks: gestor de tareas en segundo plano de FastAPI
+        tts_service: servicio TTS inyectado,
+
+    Returns:
+        FileResponse con el audio MP3 del saludo de ARIA.
+
+    Raise:
+        HTTPException 503: si el TTS o el clima no estan disponibles.
+    """
+    # Construir el texto del saludo con el clima actual
+    weather_client = OpenWeatherClient()
+    routine_service = MorningRoutineService(weather_client=weather_client)
+
+    greeting_text = routine_service.build_greeting_text(
+        user_name=request.user_name,
+    )
+
+    # Sintetizar el saludo con la voz de ARIA
+    tts_request = TTSRequest(
+        text=greeting_text,
+        voice=request.voice,
+    )
+
+    try:
+        # Sintetizar el saludo
+        _, audio_path = await tts_service.synthesize(tts_request)
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Error al sintetizar el saludo: {error}",
+        )
+    
+    # Eliminar en segundo plano el audio del saludo generado por ARIA
+    # despues de haberlo enviado al cliente (Unity)
+    background_tasks.add_task(_delete_file, audio_path)
+
+    return FileResponse(
+        path=audio_path,
+        media_type="audio/mpeg",
+        filename="morning_greeting.mp3",
+        headers={
+            "X-Greeting-Text": quote(greeting_text),
+        },
+    )
+
+
 @router.get(
     "/health",
     summary="Estado del pipeline completo",
-    description="Verifica que los tres subsistemas estan funcionando.",
+    description="Verifica que los tres subsistemas están funcionando.",
 )
 def health_check(
     request: Request,
@@ -289,6 +380,12 @@ def _build_response_headers(llm_response) -> dict:
     el audio y lo metadatos en una sola respuesta HTTP sin
     necesidad de un endpoint adicional.
 
+    Los valores de texto (response_text, action.room) se codifican
+    con URL encoding porque los headers HTTP solo soportan Latin-1
+    de forma nativa. Sin esta codificacion, caracteres como 'ñ' o
+    tildes llegan corruptos al cliente, ya que Unity decodifica los
+    headers asumiendo UTF-8.
+
     Args:
         llm_response: LLMResponse con la intencion y accion del LLM.
     
@@ -297,13 +394,13 @@ def _build_response_headers(llm_response) -> dict:
     """
     headers = {
         "X-Intent": llm_response.intent,
-        "X-Response-Text": llm_response.response_text,
+        "X-Response-Text": quote(llm_response.response_text),
     }
 
     if llm_response.intent == INTENT_HOME_ACTION and llm_response.action:
         action = llm_response.action
         headers["X-Action-Type"] = action.type
-        headers["X-Action-Room"] = action.room or "null"
+        headers["X-Action-Room"] = quote(action.room) if action.room else "null"
         headers["X-Action-State"] = action.state or "null"
         headers["X-Action-Value"] = str(action.value) if action.value is not None else "null"
 

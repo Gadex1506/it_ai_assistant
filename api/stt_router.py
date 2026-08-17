@@ -7,10 +7,10 @@
 # delega al servicio de logica de negocio y devuelve el
 # texto transcrito como JSON.
 #
-# Patron: Factory Method — funcion get_stt_service() construye
+# Patron Factory Method: funcion get_stt_service() construye
 # el STTService con sus dependencias correctamente inyectadas.
 
-# Principio S de SOLID — este modulo solo maneja HTTP para STT.
+# Principio S de SOLID: este modulo solo maneja HTTP para STT.
 # No contiene logica de negocio ni conoce motores STT.
 # =============================================================
 
@@ -67,7 +67,7 @@ router = APIRouter(prefix=ROUTER_PREFIX, tags=[ROUTER_TAG])
     description=(
         "Recibe un archivo de audio desde el cliente (Unity) y devuelve el texto "
         "transcrito usando Faster Whisper. Detecta el idioma "
-        "automaticamente si no se especifica."
+        "automáticamente si no se específica."
     ),
 )
 async def transcribe(
@@ -159,7 +159,7 @@ def get_Languages(
 @router.get(
     "/health",
     summary="Estado del servicio STT",
-    description="Verifica que el servicio STT esta funcionando.",
+    description="Verifica que el servicio STT está funcionando.",
 )
 def health_check(
     service: STTService = Depends(get_stt_service),

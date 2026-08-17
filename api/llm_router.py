@@ -7,13 +7,13 @@
 # los delega al servicio de logica de negocio y devuelve la
 # respuesta con la intencion clasificada y la accion a ejecutar.
 #
-# Patron: Factory Method - funcion get_llm_service() construye
+# Patron Factory Method: funcion get_llm_service() construye
 # el LLMService con sus dependencias correctamente inyectadas.
 #
-# Principio S de SOLID - este modulo solo maneja HTTP para LLM.
+# Principio S de SOLID: este modulo solo maneja HTTP para LLM.
 # No contiene logica de negocio ni conoce proveedores LLM.
 # =============================================================
-    
+
 from fastapi import APIRouter, Depends , HTTPException, Request, status
 from models.llm_request import LLMRequest, HouseContext
 from models.llm_response import LLMResponse
@@ -56,8 +56,8 @@ router = APIRouter(prefix=ROUTER_PREFIX, tags=[ROUTER_TAG])
     summary="Procesar mensaje del usuario",
     description=(
         "Recibe el texto transcrito por el STT del usuario y el estado actual "
-        "de la casa desde Unity. Clasifica la intencion del comando dicho por el usuario, "
-        "genera la respuesta en texto y extrae el comando de accion si corresponde. "
+        "de la casa desde Unity. Clasifica la intención del comando dicho por el usuario, "
+        "genera la respuesta en texto y extrae el comando de acción si corresponde. "
         "Todo en una sola llamada al LLM."
     ),
 )
@@ -102,11 +102,11 @@ def chat(
 
 @router.post(
     "/clear-history",
-    summary="Limpiar historial de conversacion",
+    summary="Limpiar historial de conversación",
     description=(
-        "Limpia el historial de conversacion de la sesion actual. "
+        "Limpia el historial de conversación de la sesión actual. "
         "Unity llama a este endpoint cuando el usuario termina "
-        "una sesion para empezar una nueva sin contexto previo."
+        "una sesión para empezar una nueva sin contexto previo."
     ),
 )
 def clear_history(
