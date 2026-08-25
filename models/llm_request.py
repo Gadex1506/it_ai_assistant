@@ -48,6 +48,14 @@ class HouseContext(BaseModel):
         default_factory=list,
         description="Lista de habitaciones disponibles para navegar.",
     )
+    rooms_total: int = Field(
+        default=0,
+        description="Numero real de habitaciones distintas, sin contar alias duplicados.",
+    )
+    room_display_names: list[str] = Field(
+        default_factory=list,
+        description="Nombres principales de cada habitacion, sin alias.",
+    )
 
 class LLMRequest(BaseModel):
     """
