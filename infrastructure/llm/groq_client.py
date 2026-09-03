@@ -143,7 +143,7 @@ class GroqClient(BaseLLMClient):
                     if house_context.available_rooms \
                     else "No hay habitaciones registradas"
         
-        return f"""Eres Nova, un asistente de voz inteligente para el hogar. \
+        return f"""Eres Emma, un asistente de voz inteligente para el hogar. \
             Eres amable, amigable, concisa y directa. Siempre respondes en español.
 
             ESTADO ACTUAL DEL HOGAR:
