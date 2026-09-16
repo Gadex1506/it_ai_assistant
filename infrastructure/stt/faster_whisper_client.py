@@ -83,6 +83,7 @@ class FasterWhisperClient(BaseSTTClient):
         self,
         audio_path: str,
         language: str | None = None,
+        context_hint: str | None = None,  # Nueva linea
     ) -> STTResult:
         """
         Transcribe un archivo de audio a texto usando Faster Whisper.
@@ -96,6 +97,7 @@ class FasterWhisperClient(BaseSTTClient):
                 Soporta .wav, .mp3, .ogg entre otros.
             language: codigo de idioma para forzar la transcripcion.
                 Si es None, Whisper detecta el idioma automaticamente.
+            context_hint: pista de contexto para mejorar la transcripcion.
 
         Returns:
             STTResult con texto, idioma detectado, confianza
@@ -117,6 +119,7 @@ class FasterWhisperClient(BaseSTTClient):
             language=language,
             beam_size=5,
             vad_filter=True,
+            initial_prompt=context_hint,  # Usar context_hint como pista de contexto
         )
 
         # Materializar el generador de segmentos para obtener

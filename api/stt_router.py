@@ -77,6 +77,7 @@ async def transcribe(
         description="Archivo de audio a transcribir. Formatos: .wav, .mp3, .ogg, .m4a",
     ),
     language: str | None = None,
+    context_hint: str | None = None,  # Nueva linea
     service: STTService = Depends(get_stt_service),
 ):
     """
@@ -93,6 +94,7 @@ async def transcribe(
         language: codigo de idioma opcional. Ejemplo: 'es', 'en'.
             Si no se envia, Whisper detecta el idioma automaticamente.
         service: STTService inyectado por FastAPI via Depends().
+        context_hint: pista de contexto opcional para mejorar la transcripcion.
 
     Returns:
         STTResult con texto transcrito, idioma, confianza y tiempo.
@@ -112,6 +114,7 @@ async def transcribe(
         result, audio_path = service.transcribe_audio(
             audio_bytes=audio_bytes,
             language=language,
+            context_hint=context_hint,
         )
     except ValueError as error:
         raise HTTPException(

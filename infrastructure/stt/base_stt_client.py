@@ -36,6 +36,7 @@ class BaseSTTClient(ABC):
         self,
         audio_path: str,
         language: str | None = None,
+        context_hint: str | None = None, # Nueva linea
     ) -> STTResult:
         """
         Transcribe un archivo de audio a texto.
@@ -53,6 +54,10 @@ class BaseSTTClient(ABC):
                 transcripcion. Ej: 'es', 'en'.
                 Si es None, el motor detecta el idioma
                 automaticamente.
+
+            context_hint: pista de contexto para mejorar la
+                transcripcion. Por ejemplo, nombres de
+                personas o terminos tecnicos relevantes.
 
         Returns:
             STTResult con el texto transcrito, el idioma

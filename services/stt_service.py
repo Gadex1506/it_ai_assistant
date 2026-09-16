@@ -57,6 +57,7 @@ class STTService:
         self,
         audio_bytes: bytes,
         language: str | None = None,
+        context_hint: str | None = None, # Nueva linea
     ) -> tuple[STTResult, str]:
         """
         Transcribe audio recibido desde Unity a texto.
@@ -72,7 +73,7 @@ class STTService:
             language: codigo de idioma opcional para forzar
                 la transcripcion. Si es None, Whisper
                 detecta el idioma automaticamente.
-
+            context_hint: pista de contexto para mejorar la transcripcion.
         Returns:
             Tupla de (STTResult con la transcipcion,
             stt con la ruta del archivo temporal).
@@ -93,6 +94,7 @@ class STTService:
             result = self._stt_client.transcribe(
                 audio_path=audio_path,
                 language=language,
+                context_hint=context_hint,
             )
         except Exception as error:
             # Si la transcripcion falla, eliminamos el archivo
