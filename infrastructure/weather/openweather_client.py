@@ -26,7 +26,7 @@ REQUEST_TIME_SECONDS = 10
 WEATHER_CONDITION_DESCRIPTIONS = {
     "Clear": "cielo despejado",
     "Clouds": "nublado",
-    "Rain": "lluvia",
+    "Rain": "lluvioso",
     "Drizzle": "llovizna",
     "Thunderstorm": "tormenta electrica",
     "Snow": "nevado",
