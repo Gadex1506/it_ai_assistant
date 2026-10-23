@@ -21,6 +21,9 @@ from models.tts_request import TTSRequest
 from models.tts_response import TTSResponse
 from config.settings import settings
 
+# Normalizacion de nombres para que el asistente los pronuncie correctamente en espaniol latino
+from services.name_catalog import normalize_for_tts
+
 # Directorio donde se guardan los archivos de audio temporales
 # Relativo a la raiz del proyecto
 TEMP_AUDIO_DIR = "temp_audio"
@@ -78,12 +81,15 @@ class TTSService:
         speed = self._resolve_speed(request.speed)
         pitch = self._resolve_pitch(request.pitch)
 
+        # Ajustar nombres propios para que Edge TTS los pronuncie bien
+        spoken_text = normalize_for_tts(request.text)
+
         # Generar ruta unica para este archivo de audio
         output_path = self._build_output_path()
 
         try:
             await self._tts_client.generate_audio(
-                text=request.text,
+                text=spoken_text,
                 voice=voice,
                 speed=speed,
                 pitch=pitch,

@@ -145,7 +145,7 @@ def _load_settings() -> Settings:
             default_pitch=os.getenv("TTS_DEFAULT_PITCH", "+0Hz"),
         ),
         assistant=AssistantSettings(
-            name=os.getenv("ASSISTANT_NAME", "ARIA")
+            name=os.getenv("ASSISTANT_NAME", "MÍA")
         ),
         weather=WeatherSettings(
             api_key=os.getenv("OPENWEATHER_API_KEY", ""),

@@ -22,6 +22,9 @@ from models.tts_response import TTSResponse
 from services.tts_service import TTSService
 from infrastructure.tts.edge_tts_client import EdgeTTSClient
 
+# Informacion de tipo de posibles errores del servidor
+from api.error_codes import api_error_from, ERR_TTS, EDGE_TTS_HOST
+
 # Prefijo de todas las rutas de este router
 # Todos los endpoints quedan bajo /tts/
 ROUTER_PREFIX = "/tts"
@@ -92,10 +95,8 @@ async def speak(
     try:
         response_metadata, audio_path = await service.synthesize(request)
     except RuntimeError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error en sintesis de voz: {error}",
-        )
+        raise api_error_from(error, ERR_TTS, f"Error en sintesis de voz: {error}",
+                    probe_host=EDGE_TTS_HOST)
     
     # Verificar que el archivo fue realmente creado
     if not os.path.exists(audio_path):

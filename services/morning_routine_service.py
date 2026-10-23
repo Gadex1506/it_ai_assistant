@@ -24,23 +24,6 @@ GREETING_EVENING = "Buenas noches"
 MORNING_END_HOUR = 12
 AFTERNOON_END_HOUR = 19
 
-# Mapa de nombres con pronunciacion problematica en espaniol latino
-# Clave: nombre como el usuario lo escribiria o diria
-# Valor: equivalente fonetico que Edge TTS pronuncia correctamente
-PHONETIC_NAME_APP = {
-    "angie": "Anyi",
-    "michael": "Maicol",
-    "isabella": "Isabela",
-    "kevin": "Kebin",
-    "jennifer": "Yenifer",
-    "ashley": "Ashli",
-    "nicole": "Nicol",
-    "daniel": "Daniel",
-    "natalie": "Natali",
-    "brianna": "Briana",
-    "helen": "Jelen",
-}
-
 class MorningRoutineService:
     """
     Servicio que construye el saludo dinamico de ARIA apenas el usuario abra la aplicacion
@@ -146,23 +129,6 @@ class MorningRoutineService:
         else:
             return f"las {hour_12} y {minute} {period}"
 
-    def _normalize_name_for_tts(self, name: str) -> str:
-        """
-        Normaliza un nombre para que Edge TTS lo pronuncie correctamente
-        en espaniol latino
-        
-        Algunos nombres de origen anglosajon son pronunciados por Edge TTS
-        siguiendo reglas del ingles en lugar del espaniol. Este metodo
-        reemplaza esos nombres por su equivalente fonetico en espaniol.
-
-        Args:
-            name: nombre del usuario tal como esta registrado.
-
-        Returns:
-            Nombre normalizado para pronunciacion correcta en espaniol
-        """
-        return PHONETIC_NAME_APP.get(name.lower(), name)
-
     def _build_weather_text(self, weather: WeatherData) -> str:
         """
         Construye el texto del clima para incluir en el saludo.
@@ -200,8 +166,8 @@ class MorningRoutineService:
             Texto completo del saludo listo para el TTS.
         """
         if user_name:
-            normalized_name = self._normalize_name_for_tts(user_name)
-            name_part = f"{greeting}, {normalized_name}."
+            #normalized_name = self._normalize_name_for_tts(user_name)
+            name_part = f"{greeting}, {user_name}."
         else:
             name_part = f"{greeting}."
 

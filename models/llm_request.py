@@ -56,6 +56,10 @@ class HouseContext(BaseModel):
         default_factory=list,
         description="Nombres principales de cada habitacion, sin alias.",
     )
+    user_name: Optional[str] = Field (
+        default=None,
+        description="Nombre del usuario, si se conoce. Puede ser None si no se conoce.",
+    )
 
 class LLMRequest(BaseModel):
     """

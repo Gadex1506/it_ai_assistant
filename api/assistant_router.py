@@ -38,6 +38,13 @@ from services.llm_service import LLMService
 from services.tts_service import TTSService
 from services.morning_routine_service import MorningRoutineService
 
+# Error codes
+from api.error_codes import (
+    api_error, api_error_from, 
+    ERR_STT, ERR_LLM, ERR_TTS, ERR_EMPTY_TRANSCRIPTION,
+    GROQ_HOST, EDGE_TTS_HOST,
+)
+
 import logging
 
 logger = logging.getLogger("it_ai_assistant")
@@ -47,7 +54,6 @@ ROUTER_TAG = "Assistant Pipeline"
 
 # Voz por defecto si el cliente (Unity) no especifica ninguna
 DEFAULT_VOICE = None
-
 
 # =============================================================
 # Factory Methods: Leen servicios desde app.state
@@ -178,15 +184,22 @@ async def process_voice_command(
         )
         logger.info(f"[DEBUG] STT transcribio: '{stt_result.text}' (idioma: {stt_result.language})")
     except RuntimeError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error en transcripcion de voz (STT): {error}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE, ERR_STT,
+                f"Error en transcripcion de voz (STT): {error}"
         )
     finally:
         # Eliminar el audio temporal del STT en segundo plano
         if 'audio_temp_path' in locals():
             background_tasks.add_task(_delete_file, audio_temp_path)
-    
+
+    # Silencio o ruido: no tiene sentido llamar al LLM
+    if not stt_result.text or not stt_result.text.strip():
+        raise api_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, ERR_EMPTY_TRANSCRIPTION,
+                "No se detecto voz en el audio."
+            )
+
     # ── PASO 4: LLM - clasificar intencion y generar respuesta ─
     try:
         llm_response = llm_service.process_message(
@@ -194,11 +207,8 @@ async def process_voice_command(
             house_context=house_context,
         )
     except RuntimeError as error:
-        logger.error(f"[DEBUG] Fallo en LLM: {error}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error en procesamiento de lenguaje (LLM): {error}",
-        )
+        raise api_error_from(error, ERR_LLM, f"Error en procesamiento de lenguaje (LLM): {error}",
+                probe_host=GROQ_HOST)
     
     # ── PASO 5: TTS - sintetizar la respuesta en audio ────────
     tts_request = TTSRequest(
@@ -209,11 +219,8 @@ async def process_voice_command(
     try:
         _, tts_audio_path = await tts_service.synthesize(tts_request)
     except RuntimeError as error:
-        logger.error(f"[DEBUG] Fallo en TTS: {error}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error en sintesis de voz (TTS): {error}",
-        )
+        raise api_error_from(error, ERR_TTS, f"Error en sintesis de voz (TTS): {error}",
+                probe_host=EDGE_TTS_HOST)
     
     # Programa eliminacion del audio TTS de respuesta despues de enviarlo a Unity
     background_tasks.add_task(_delete_file, tts_audio_path)
@@ -283,10 +290,8 @@ async def morning_greeting(
         # Sintetizar el saludo
         _, audio_path = await tts_service.synthesize(tts_request)
     except RuntimeError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error al sintetizar el saludo: {error}",
-        )
+        raise api_error_from(error, ERR_TTS, f"Error en sintesis de voz (TTS): {error}",
+                probe_host=EDGE_TTS_HOST)
     
     # Eliminar en segundo plano el audio del saludo generado por ARIA
     # despues de haberlo enviado al cliente (Unity)
