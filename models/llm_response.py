@@ -63,6 +63,8 @@ class LLMResponse(BaseModel):
         action: datos de la accion si intent es home_action. None si no aplica.
         processing_time_ms: tiempo que tardo el LLM en responder.
         tokens_used: tokens consumidos en la peticion.
+        prompt_tokens: tokens de entrada: system prompt, historial y mensaje del usuario.
+        completion_tokens: tokens generados por el modelo en su respuesta.
     """
 
     response_text: str =  Field(
@@ -84,4 +86,16 @@ class LLMResponse(BaseModel):
     tokens_used: Optional[int] = Field(
         default=None,
         description="Tokens consumidos en la peticion al LLM.",
+    )
+    cached_tokens: Optional[int] = Field(
+        default=None,
+        description="Tokens de entrada servidos desde el cache de prompt de Groq.",
+    )
+    prompt_tokens: Optional[int] = Field(
+        default=None,
+        description="Tokens de entrada: system prompt, historial y mensaje del usuario.",
+    )
+    completion_tokens: Optional[int] = Field(
+        default=None,
+        description="Tokens generados por el modelo en su respuesta.",
     )

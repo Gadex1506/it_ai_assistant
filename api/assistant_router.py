@@ -1,11 +1,14 @@
 # api/assistant_router.py
 # =============================================================
-# Router orquestador del pipeline completo del asistente ARIA.
+# Router orquestador del pipeline completo del asistente Mía.
 #
-# Responsabilidad: coordinar el pipeline STT -> LLM -> TTS
-# en un unico endpoint. El cliente (Unity) envia el audio del usuario
-# y recibe el audio de respuesta del asistente mas los
-# metadatos de accion en los headers HTTP.
+# Responsabilidad: coordinar el pipeline STT -> LLM -> TTS.
+# Expone dos entradas al mismo pipeline:
+#   - /process       recibe AUDIO (hace STT, luego LLM y TTS).
+#   - /process-text  recibe TEXTO ya transcrito (salta el STT).
+# Unity usa /process-text porque ya transcribio el audio antes
+# para detectar el cierre de sesion, y repetir el STT costaba
+# mas de un segundo por comando.
 #
 # Patron Facade: este router actua como fachada sobre los
 # tres subsistemas (STT, LLM, TTS) exponiendo una interfaz
@@ -13,24 +16,33 @@
 #
 # Patron Factory Method: funciones get_*_service() construyen
 # los servicios con sus dependencias desde app.state.
+#
+# Patron Template Method (ligero): _generate_response() es la parte
+# comun LLM -> TTS -> headers; cada endpoint solo cambia como
+# obtiene el texto del usuario.
 # =============================================================
 
 import os
 import json
+import logging
+from contextlib import contextmanager
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi import BackgroundTasks, Request, status
 from fastapi.responses import FileResponse
-from urllib.parse import quote
 
 # Models
 from models.llm_request import HouseContext
 from models.llm_response import INTENT_HOME_ACTION
 from models.tts_request import TTSRequest
 from models.morning_greeting_request import MorningGreetingRequest
+from models.text_command_request import TextCommandRequest
 
 # Infrastructure
 from infrastructure.tts.edge_tts_client import EdgeTTSClient
 from infrastructure.weather.openweather_client import OpenWeatherClient
+from infrastructure.metrics.latency_log import PipelineTimings, latency_logger
 
 # Services
 from services.stt_service import STTService
@@ -40,12 +52,10 @@ from services.morning_routine_service import MorningRoutineService
 
 # Error codes
 from api.error_codes import (
-    api_error, api_error_from, 
+    api_error, api_error_from, error_code_of,
     ERR_STT, ERR_LLM, ERR_TTS, ERR_EMPTY_TRANSCRIPTION,
     GROQ_HOST, EDGE_TTS_HOST,
 )
-
-import logging
 
 logger = logging.getLogger("it_ai_assistant")
 
@@ -60,38 +70,19 @@ DEFAULT_VOICE = None
 # =============================================================
 
 def get_stt_service(request: Request) -> STTService:
-    """
-    Retorna STTService con el cliente Whisper precargado.
-    
-    Args:
-        request: peticion HTTP actual.
-
-    Returns:
-        STTService listo para transcribir audio.
-    """
+    """Retorna STTService con el cliente Whisper precargado."""
     return STTService(stt_client=request.app.state.stt_client)
 
 def get_llm_service(request: Request) -> LLMService:
-    """
-    Retorna el LLMService con el historial persistente desde app.state
-    
-    Args:
-        request: peticion HTTP actual.
-
-    Returns:
-        LLMService con historial de conversacion.
-    """
+    """Retorna el LLMService con el historial persistente desde app.state."""
     return request.app.state.llm_service
 
 def get_tts_service() -> TTSService:
     """
     Construye TTSService con EdgeTTSClient.
-    
-    TTS no necesita estado persistente entre peticiones
-    por lo que se puede crear en cada llamada sin problema.
 
-    Returns:
-        TTSService listo para sintetizar voz.
+    TTS no necesita estado persistente entre peticiones,
+    por lo que se puede crear en cada llamada sin problema.
     """
     return TTSService(tts_client=EdgeTTSClient())
 
@@ -99,21 +90,46 @@ router = APIRouter(prefix=ROUTER_PREFIX, tags=[ROUTER_TAG])
 
 
 # =============================================================
-# Endpoint orquestador principal
+# Registro de latencias
+# =============================================================
+
+@contextmanager
+def _tracked(timings: PipelineTimings):
+    """
+    Garantiza que cada peticion deje una fila en el registro de latencias,
+    termine bien o mal, y que el estado quede anotado.
+
+    Evita repetir el try/except/finally en cada endpoint.
+    """
+    try:
+        yield
+    except HTTPException as exc:
+        timings.status = error_code_of(exc)
+        raise
+    except Exception:
+        timings.status = "unexpected_error"
+        raise
+    finally:
+        timings.finish()
+        latency_logger.write(timings)
+
+
+# =============================================================
+# Endpoints orquestadores
 # =============================================================
 
 @router.post(
     "/process",
     response_class=FileResponse,
-    summary="Procesar comando de voz completo",
+    summary="Procesar comando de voz completo (audio)",
     description=(
-        "Endpoint principal del asistente. Recibe el audio del usuario "
-        "desde Unity y ejecuta el pipeline completo STT -> LMM -> TTS. "
-        "Devuelve el audio de respuesta del asistente como MP3. "
-        "La acción del hogar (si aplica) viene en los headers de la respuesta."
+        "Recibe el audio del usuario y ejecuta el pipeline completo "
+        "STT -> LLM -> TTS. Devuelve el audio de respuesta como MP3. "
+        "La accion del hogar (si aplica) viene en los headers."
     ),
 )
 async def process_voice_command(
+    http_request: Request,
     background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(
         ...,
@@ -127,122 +143,218 @@ async def process_voice_command(
     tts_service: TTSService = Depends(get_tts_service),
 ):
     """
-    Orquesta el pipeline completo de ARIA STT -> LMM -> TTS.
-    
-    Recibe el audio del usuario, lo transcribe con Whisper,
-    procesa el texto con Groq para clasifica la intencion y
-    generar la respuesta, sintetiza la respuesta con Edge TTS
-    y devuelve el audio de respuesta al usuario.
-
-    La accion del hogar (si intent es home_action) viene en
-    los headers HTTP de la respuesta para que Unity pueda
-    leerla y ejecutar la accion correspondiente en la casa.
+    Pipeline completo desde audio: STT -> LLM -> TTS.
 
     Args:
-        background_tasks: gestor de tareas en segundo plano.
-        audio_file: archivo de audio del comando del usuario.
-        voice: voz de Edge TTS opcional, Usa la del .env si es None.
-        language: idioma para Whisper opcional. Detecta automaticamente si es None.
-        house_context_json: estado de la casa serializado como JSON string.
-            Unity lo envia como form field junto al audio.
-        stt_service: servicio STT inyectado desde app.state.
-        llm_service: servicio LLM inyectado desde app.state.
-        tts_service: servicio TTS inyectado.
+        http_request: peticion HTTP (lee X-Request-Id).
+        background_tasks: tareas en segundo plano para borrar temporales.
+        audio_file: audio del comando del usuario.
+        voice: voz de Edge TTS opcional.
+        language: idioma para Whisper opcional.
+        house_context_json: estado de la casa como JSON string.
+        stt_service, llm_service, tts_service: servicios inyectados.
 
     Returns:
-        FileResponse con el audio MP3 de la respuesta del asistente.
-        Headers con la intencion y accion del hogar si aplica.
+        FileResponse con el MP3 de respuesta y la accion en headers.
 
     Raises:
-        HTTPException 400: si el audio esta vacio o el formato es invalido.
-        HTTPException 503: si alguno de los servicios externos falla.
+        HTTPException 400: audio vacio.
+        HTTPException 422: no se detecto voz.
+        HTTPException 503/429: falla de STT, LLM o TTS.
     """
-
-    # ── PASO 1: Leer el audio enviado por Unity ───────────────
-    audio_bytes = await audio_file.read()
-
-    # TEMPORAL — guardar copia para diagnostico, borrar despues
-    debug_path = os.path.join("temp_audio", "DEBUG_received_audio.wav")
-    with open(debug_path, "wb") as f:
-        f.write(audio_bytes)
-    logger.info(f"[DEBUG] Audio recibido: {len(audio_bytes)} bytes, guardado en {debug_path}")
-
-    if not audio_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El archivo de audio esta vacio.",
-        )
-    
-    # ── PASO 2: Parsear el contexto del hogar ─────────────────
-    house_context = _parse_house_context(house_context_json)
-
-    # ── PASO 3: STT - transcribir el audio a texto ────────────
-    try:
-        stt_result, audio_temp_path = stt_service.transcribe_audio(
-            audio_bytes=audio_bytes,
-            language=language,
-        )
-        logger.info(f"[DEBUG] STT transcribio: '{stt_result.text}' (idioma: {stt_result.language})")
-    except RuntimeError as error:
-        raise api_error(
-            status.HTTP_503_SERVICE_UNAVAILABLE, ERR_STT,
-                f"Error en transcripcion de voz (STT): {error}"
-        )
-    finally:
-        # Eliminar el audio temporal del STT en segundo plano
-        if 'audio_temp_path' in locals():
-            background_tasks.add_task(_delete_file, audio_temp_path)
-
-    # Silencio o ruido: no tiene sentido llamar al LLM
-    if not stt_result.text or not stt_result.text.strip():
-        raise api_error(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, ERR_EMPTY_TRANSCRIPTION,
-                "No se detecto voz en el audio."
-            )
-
-    # ── PASO 4: LLM - clasificar intencion y generar respuesta ─
-    try:
-        llm_response = llm_service.process_message(
-            user_text=stt_result.text,
-            house_context=house_context,
-        )
-    except RuntimeError as error:
-        raise api_error_from(error, ERR_LLM, f"Error en procesamiento de lenguaje (LLM): {error}",
-                probe_host=GROQ_HOST)
-    
-    # ── PASO 5: TTS - sintetizar la respuesta en audio ────────
-    tts_request = TTSRequest(
-        text=llm_response.response_text,
-        voice=voice,
+    timings = PipelineTimings(
+        request_id=http_request.headers.get("x-request-id"),
+        language=language,
     )
 
+    with _tracked(timings):
+        audio_bytes = await audio_file.read()
+        timings.audio_bytes = len(audio_bytes)
+
+        if not audio_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El archivo de audio esta vacio.",
+            )
+
+        house_context = _parse_house_context(house_context_json)
+
+        # STT: transcribir el audio a texto
+        audio_temp_path = None
+        try:
+            with timings.stage("stt"):
+                stt_result, audio_temp_path = stt_service.transcribe_audio(
+                    audio_bytes=audio_bytes,
+                    language=language,
+                )
+            timings.stt_infer_ms = getattr(stt_result, "processing_time_ms", None)
+            timings.stt_chars = len(stt_result.text or "")
+            logger.info(f"[DEBUG] STT transcribio: '{stt_result.text}' (idioma: {stt_result.language})")
+        except RuntimeError as error:
+            raise api_error(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                ERR_STT,
+                f"Error en transcripcion de voz (STT): {error}",
+            )
+        finally:
+            if audio_temp_path:
+                background_tasks.add_task(_delete_file, audio_temp_path)
+
+        # Silencio o ruido: no tiene sentido llamar al LLM
+        if not stt_result.text or not stt_result.text.strip():
+            raise api_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                ERR_EMPTY_TRANSCRIPTION,
+                "No se detecto voz en el audio.",
+            )
+
+        return await _generate_response(
+            user_text=stt_result.text,
+            house_context=house_context,
+            voice=voice,
+            timings=timings,
+            background_tasks=background_tasks,
+            llm_service=llm_service,
+            tts_service=tts_service,
+        )
+
+
+@router.post(
+    "/process-text",
+    response_class=FileResponse,
+    summary="Procesar comando ya transcrito (texto)",
+    description=(
+        "Igual que /process pero el cliente ya transcribio el audio. "
+        "Salta el STT y ejecuta LLM -> TTS. Devuelve el MP3 de respuesta."
+    ),
+)
+async def process_text_command(
+    body: TextCommandRequest,
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    llm_service: LLMService = Depends(get_llm_service),
+    tts_service: TTSService = Depends(get_tts_service),
+):
+    """
+    Pipeline desde texto: LLM -> TTS.
+
+    Args:
+        body: TextCommandRequest con el texto, el contexto y la voz.
+        http_request: peticion HTTP (lee X-Request-Id).
+        background_tasks: tareas en segundo plano.
+        llm_service, tts_service: servicios inyectados.
+
+    Returns:
+        FileResponse con el MP3 de respuesta y la accion en headers.
+
+    Raises:
+        HTTPException 422: texto vacio tras quitar espacios.
+        HTTPException 503/429: falla de LLM o TTS.
+    """
+    timings = PipelineTimings(request_id=http_request.headers.get("x-request-id"))
+
+    with _tracked(timings):
+        text = body.text.strip()
+        timings.stt_chars = len(text)
+
+        if not text:
+            raise api_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                ERR_EMPTY_TRANSCRIPTION,
+                "El texto del comando esta vacio.",
+            )
+
+        return await _generate_response(
+            user_text=text,
+            house_context=_parse_house_context(body.house_context_json),
+            voice=body.voice,
+            timings=timings,
+            background_tasks=background_tasks,
+            llm_service=llm_service,
+            tts_service=tts_service,
+        )
+
+
+async def _generate_response(
+    user_text: str,
+    house_context: HouseContext,
+    voice: str | None,
+    timings: PipelineTimings,
+    background_tasks: BackgroundTasks,
+    llm_service: LLMService,
+    tts_service: TTSService,
+) -> FileResponse:
+    """
+    Parte comun del pipeline: LLM -> TTS -> respuesta con headers.
+
+    Args:
+        user_text: texto del usuario ya transcrito.
+        house_context: estado de la casa.
+        voice: voz de Edge TTS opcional.
+        timings: cronometro de la peticion (se completa aqui).
+        background_tasks: para borrar el MP3 despues de enviarlo.
+        llm_service, tts_service: servicios a usar.
+
+    Returns:
+        FileResponse con el MP3 y los headers de accion.
+    """
+    # LLM: clasificar intencion y generar respuesta
     try:
-        _, tts_audio_path = await tts_service.synthesize(tts_request)
+        with timings.stage("llm"):
+            llm_response = llm_service.process_message(
+                user_text=user_text,
+                house_context=house_context,
+            )
     except RuntimeError as error:
-        raise api_error_from(error, ERR_TTS, f"Error en sintesis de voz (TTS): {error}",
-                probe_host=EDGE_TTS_HOST)
-    
-    # Programa eliminacion del audio TTS de respuesta despues de enviarlo a Unity
+        logger.error(f"[DEBUG] Fallo en LLM: {error}")
+        raise api_error_from(
+            error, ERR_LLM,
+            f"Error en procesamiento de lenguaje (LLM): {error}",
+            probe_host=GROQ_HOST,
+        )
+
+    timings.intent = llm_response.intent
+    timings.response_chars = len(llm_response.response_text or "")
+    timings.set_usage({
+        "prompt_tokens": llm_response.prompt_tokens,
+        "completion_tokens": llm_response.completion_tokens,
+        "total_tokens": llm_response.tokens_used,
+        "cached_tokens": llm_response.cached_tokens,
+    })
+
+    # TTS: sintetizar la respuesta en audio
+    try:
+        with timings.stage("tts"):
+            _, tts_audio_path = await tts_service.synthesize(
+                TTSRequest(text=llm_response.response_text, voice=voice)
+            )
+    except RuntimeError as error:
+        logger.error(f"[DEBUG] Fallo en TTS: {error}")
+        raise api_error_from(
+            error, ERR_TTS,
+            f"Error en sintesis de voz (TTS): {error}",
+            probe_host=EDGE_TTS_HOST,
+        )
+
     background_tasks.add_task(_delete_file, tts_audio_path)
 
-    # ── PASO 6: Construir headers con la accion del hogar ─────
-    response_headers = _build_response_headers(llm_response)
-
+    timings.status = "ok"
     return FileResponse(
         path=tts_audio_path,
         media_type="audio/mpeg",
         filename="response.mp3",
-        headers=response_headers,
+        headers=_build_response_headers(llm_response),
     )
+
 
 @router.post(
     "/morning-greeting",
     response_class=FileResponse,
     summary="Saludo matutino con el clima",
     description=(
-        "Genera el saludo matutino de ARIA con la info del clima actual de Bogotá. "
+        "Genera el saludo matutino de Mía con la info del clima actual de Bogotá. "
         "Unity llama a este endpoint al abrir la aplicación una vez por día. "
-        "Devuelve el audio MP3 con el saludo dinámico de ARIA."
+        "Devuelve el audio MP3 con el saludo dinámico de Mía."
     ),
 )
 async def morning_greeting(
@@ -251,15 +363,15 @@ async def morning_greeting(
     tts_service: TTSService = Depends(get_tts_service),
 ):
     """
-    Genera el saludo matutino dinamico de ARIA.
+    Genera el saludo matutino dinamico de Mía.
     
     Consulta el clima actual de Bogota en OpenWeatherMap,
     construye el texto del saludo con el nombre del usuario,
-    la hora y el clima, y lo sintetiza con la voz de ARIA.
+    la hora y el clima, y lo sintetiza con la voz de Mía.
 
     Unity reproduce primero el audio pregrabado de bienvenida
     y luego el audio que devuelve este endpoint, creando una
-    experiencia de transicion entre la voz grabada y ARIA.
+    experiencia de transicion entre la voz grabada y Mía.
 
     Args:
         request: MorningGreetingRequest con nombre del usuario y voz opcional.
@@ -267,7 +379,7 @@ async def morning_greeting(
         tts_service: servicio TTS inyectado,
 
     Returns:
-        FileResponse con el audio MP3 del saludo de ARIA.
+        FileResponse con el audio MP3 del saludo de Mía.
 
     Raise:
         HTTPException 503: si el TTS o el clima no estan disponibles.
@@ -280,7 +392,7 @@ async def morning_greeting(
         user_name=request.user_name,
     )
 
-    # Sintetizar el saludo con la voz de ARIA
+    # Sintetizar el saludo con la voz de Mía
     tts_request = TTSRequest(
         text=greeting_text,
         voice=request.voice,
@@ -293,7 +405,7 @@ async def morning_greeting(
         raise api_error_from(error, ERR_TTS, f"Error en sintesis de voz (TTS): {error}",
                 probe_host=EDGE_TTS_HOST)
     
-    # Eliminar en segundo plano el audio del saludo generado por ARIA
+    # Eliminar en segundo plano el audio del saludo generado por Mía
     # despues de haberlo enviado al cliente (Unity)
     background_tasks.add_task(_delete_file, audio_path)
 

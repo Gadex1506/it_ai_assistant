@@ -20,3 +20,6 @@ __pycache__/
 test_*.py
 test_output.*
 test_voice_*.mp3
+
+# Logs de latencias del pipeline
+logs/

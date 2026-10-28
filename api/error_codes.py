@@ -134,3 +134,8 @@ def api_error_from(error: Exception, default_code: str, detail: str, probe_host:
         else status.HTTP_503_SERVICE_UNAVAILABLE
     )
     return api_error(http_status, code, detail)
+
+def error_code_of(exc: HTTPException) -> str:
+    """Devuelve el codigo de error de un HTTPException, o http_<status> si no tiene."""
+    headers = exc.headers or {}
+    return headers.get(ERROR_CODE_HEADER, f"http_{exc.status_code}")
