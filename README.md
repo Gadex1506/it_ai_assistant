@@ -42,19 +42,25 @@ Este servicio expone una API HTTP (FastAPI) que ejecuta el pipeline completo de 
 
 El proyecto sigue una arquitectura por capas con inyección de dependencias de FastAPI. Cada capa tiene una responsabilidad única y depende de abstracciones (clases base), no de implementaciones concretas.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  api/        Routers HTTP (STT, LLM, TTS, Assistant)      │  ← Entrada/salida
-├─────────────────────────────────────────────────────────┤
-│  services/   Lógica de negocio (orquesta el pipeline)    │  ← Reglas
-├─────────────────────────────────────────────────────────┤
-│  infrastructure/  Clientes concretos (Groq, Whisper,     │  ← Detalles técnicos
-│                   Edge TTS, OpenWeather)                  │
-├─────────────────────────────────────────────────────────┤
-│  models/     DTOs de petición y respuesta (Pydantic)     │  ← Contratos de datos
-├─────────────────────────────────────────────────────────┤
-│  config/     Configuración centralizada (Singleton)      │  ← Lee el .env una vez
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    api["<b>api/</b><br/>Routers HTTP · STT, LLM, TTS, Assistant"]
+    services["<b>services/</b><br/>Lógica de negocio · orquesta el pipeline"]
+    infra["<b>infrastructure/</b><br/>Clientes concretos · Groq, Whisper, Edge TTS, OpenWeather"]
+    models["<b>models/</b><br/>DTOs Pydantic · contratos de datos"]
+    config["<b>config/</b><br/>Configuración Singleton · lee el .env una vez"]
+ 
+    api --> services --> infra
+    models -.-> api
+    models -.-> services
+    config -.-> api
+    config -.-> services
+    config -.-> infra
+ 
+    classDef layer fill:#1f6feb,stroke:#0b3a8c,color:#fff;
+    classDef side fill:#2d333b,stroke:#444c56,color:#fff;
+    class api,services,infra layer;
+    class models,config side;
 ```
 
 Patrones de diseño aplicados:
@@ -68,14 +74,17 @@ Patrones de diseño aplicados:
 
 ## El pipeline de voz
 
-```
-  🎙️  Audio del usuario (WAV/MP3)
-        │
-        ▼
-  ┌───────────┐   texto    ┌───────────┐   intención +   ┌───────────┐   audio
-  │    STT    │ ─────────▶ │    LLM    │   respuesta     │    TTS    │ ─────────▶  🔊 Respuesta (MP3)
-  │  Whisper  │            │   Groq    │ ──────────────▶ │ Edge TTS  │            + acción en headers
-  └───────────┘            └───────────┘                 └───────────┘
+```mermaid
+flowchart LR
+    user(["Audio del usuario<br/>WAV / MP3"]) --> stt
+    stt["<b>STT</b><br/>Whisper"] -->|texto| llm["<b>LLM</b><br/>Groq"]
+    llm -->|intención + respuesta| tts["<b>TTS</b><br/>Edge TTS"]
+    tts --> out(["Respuesta MP3<br/>+ acción en headers"])
+ 
+    classDef stage fill:#1f6feb,stroke:#0b3a8c,color:#fff;
+    classDef io fill:#238636,stroke:#116329,color:#fff;
+    class stt,llm,tts stage;
+    class user,out io;
 ```
 
 1. **STT** — `faster-whisper` transcribe el audio a texto.
