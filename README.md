@@ -1,4 +1,4 @@
-# it_ai_assistant — Mía, asistente de voz del hogar
+# it_ai_assistant: Mía, asistente de voz del hogar
 
 Servidor del asistente de voz inteligente del proyecto **Inclusive Tech**, un sistema domótico accesible desarrollado como proyecto de grado en la Fundación Universitaria Konrad Lorenz.
 
